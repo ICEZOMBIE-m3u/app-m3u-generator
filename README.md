@@ -1,4 +1,5 @@
-** The fork has added links for many regions. **
+⭐ First I'd like to thank BuddyChewChew who assisted on getting this fork setup. Also this fork has added links for many regions. ⭐
+
 Please support these services by visiting the websites for more content. [pluto.tv](https://pluto.tv/us/hub/home), [plex](https://www.plex.tv), [samsungtvplus](https://www.samsungtvplus.com), [stirr](https://stirr.com), [tubitv](https://tubitv.com), [roku](https://therokuchannel.roku.com/)
 
 # ⭐ FAST Service M3U Playlist Generator
