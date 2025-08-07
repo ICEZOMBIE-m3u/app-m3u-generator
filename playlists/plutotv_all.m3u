@@ -1265,8 +1265,6 @@ https://jmp2.uk/plu-67e1255b03c76bc15ebba607.m3u8
 https://jmp2.uk/plu-67e124ca17c292dfd532ddee.m3u8
 #EXTINF:-1 channel-id="66f1331f9409630008077623-gb" tvg-id="66f1331f9409630008077623" tvg-chno="284" tvg-name="Earth: Final Conflict" tvg-logo="https://images.pluto.tv/channels/66f1331f9409630008077623/colorLogoPNG_1730797917382.png" group-title="United Kingdom",Earth: Final Conflict
 https://jmp2.uk/plu-66f1331f9409630008077623.m3u8
-#EXTINF:-1 channel-id="650b69cfd1f20c0008586bac-us" tvg-id="650b69cfd1f20c0008586bac" tvg-chno="3570" tvg-name="EarthDay 365" tvg-logo="https://images.pluto.tv/channels/650b69cfd1f20c0008586bac/colorLogoPNG.png" group-title="United States",EarthDay 365
-https://jmp2.uk/plu-650b69cfd1f20c0008586bac.m3u8
 #EXTINF:-1 channel-id="6675c713fc3a46000863dde7-us" tvg-id="6675c713fc3a46000863dde7" tvg-chno="1016" tvg-name="Ebony TV Drama" tvg-logo="https://images.pluto.tv/channels/6675c713fc3a46000863dde7/colorLogoPNG.png" group-title="United States",Ebony TV Drama
 https://jmp2.uk/plu-6675c713fc3a46000863dde7.m3u8
 #EXTINF:-1 channel-id="63b578b524f0cf00072f2a52-fr" tvg-id="63b578b524f0cf00072f2a52" tvg-chno="915" tvg-name="Echappées Belles & Co" tvg-logo="https://images.pluto.tv/channels/63b578b524f0cf00072f2a52/colorLogoPNG.png" group-title="France",Echappées Belles & Co
@@ -4879,7 +4877,7 @@ https://jmp2.uk/plu-62f3f05505e621000783df2f.m3u8
 https://jmp2.uk/plu-62e7fc8c0d061100083946a9.m3u8
 #EXTINF:-1 channel-id="62619405c733e8000732d1fe-it" tvg-id="62619405c733e8000732d1fe" tvg-chno="735" tvg-name="Teenage Mutant Ninja Turtles" tvg-logo="https://images.pluto.tv/channels/62619405c733e8000732d1fe/colorLogoPNG.png" group-title="Italy",Teenage Mutant Ninja Turtles
 https://jmp2.uk/plu-62619405c733e8000732d1fe.m3u8
-#EXTINF:-1 channel-id="613237a1c9e0db0007a91350-ar" tvg-id="613237a1c9e0db0007a91350" tvg-chno="1052" tvg-name="Telefe Pluto TV" tvg-logo="https://images.pluto.tv/channels/613237a1c9e0db0007a91350/colorLogoPNG_1749138361522.png" group-title="Argentina",Telefe Pluto TV
+#EXTINF:-1 channel-id="613237a1c9e0db0007a91350-ar" tvg-id="613237a1c9e0db0007a91350" tvg-chno="1052" tvg-name="Telefe Pluto TV" tvg-logo="https://images.pluto.tv/channels/613237a1c9e0db0007a91350/colorLogoPNG_1754501455912.png" group-title="Argentina",Telefe Pluto TV
 https://jmp2.uk/plu-613237a1c9e0db0007a91350.m3u8
 #EXTINF:-1 channel-id="63d2c140c111bc0008cb890b-mx" tvg-id="63d2c140c111bc0008cb890b" tvg-chno="705" tvg-name="TeleFórmula" tvg-logo="https://images.pluto.tv/channels/63d2c140c111bc0008cb890b/colorLogoPNG.png" group-title="Mexico",TeleFórmula
 https://jmp2.uk/plu-63d2c140c111bc0008cb890b.m3u8
