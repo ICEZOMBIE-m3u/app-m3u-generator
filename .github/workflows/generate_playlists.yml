@@ -44,7 +44,7 @@ jobs:
       - name: Fix Tubi EPG URL (The TiviMate Fix)
         run: |
           # 1. We build the full URL to your XML file on GitHub
-          # This creates: https://raw.githubusercontent.com/YOUR_USER/YOUR_REPO/main/playlists/tubi_epg.xml
+          # This creates: https://raw.githubusercontent.com/BuddyChewChew/app-m3u-generator/main/playlists/tubi_epg.xml
           GITHUB_RAW_URL="https://raw.githubusercontent.com/${{ github.repository }}/main/playlists/tubi_epg.xml"
           
           echo "Updating M3U to use full EPG URL: $GITHUB_RAW_URL"
@@ -66,3 +66,4 @@ jobs:
           git diff --staged --quiet || git commit -m "Update Tubi playlists and fix EPG URL [skip ci]"
           
           git push origin main || echo "Push failed or no changes"
+
