@@ -323,303 +323,95 @@ def generate_roku_m3u():
 
 # --- Tubi Scraping Logic ---
 
-TUBI_LIVE_PAGE_URL  = "https://tubitv.com/live"
-TUBI_CONTAINERS_URL = "https://tubitv.com/oz/containers/linear"
-TUBI_EPG_URL        = "https://tubitv.com/oz/epg/programming"
-TUBI_HEADERS = {
-    'User-Agent': USER_AGENT,
-    'Accept-Language': 'en-US,en;q=0.9',
-    'Accept': 'application/json, text/html, */*',
-}
-
-_SOCKS_READY = None
-
-def ensure_socks_support():
-    """
-    requests needs PySocks to use socks4:// proxies. CI runners frequently ship
-    without it, producing "Missing dependencies for SOCKS support" on every
-    proxy attempt. Detect that and try a one-time install so proxies can run.
-    """
-    global _SOCKS_READY
-    if _SOCKS_READY is not None:
-        return _SOCKS_READY
-
-    try:
-        import socks  # noqa: F401  (provided by PySocks)
-        _SOCKS_READY = True
-        return True
-    except Exception:
-        pass
-
-    try:
-        import subprocess
-        import sys
-        logger.info("PySocks not found; attempting to install it for SOCKS proxy support...")
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "--quiet", "PySocks"])
-        import socks  # noqa: F401
-        _SOCKS_READY = True
-    except Exception as e:
-        logger.warning(f"Could not enable SOCKS proxy support: {e}")
-        _SOCKS_READY = False
-
-    return _SOCKS_READY
-
-def _tubi_request_kwargs(proxy):
-    kwargs = {"headers": TUBI_HEADERS, "verify": False, "timeout": 20}
-    if proxy:
-        kwargs["proxies"] = {"http": proxy, "https": proxy}
-    return kwargs
-
 def get_proxies(country_code):
     url = f"https://api.proxyscrape.com/v2/?request=displayproxies&protocol=socks4&timeout=10000&country={country_code}&ssl=all&anonymity=elite"
-    try:
-        response = requests.get(url, timeout=15)
-        if response.status_code == 200:
-            proxy_list = response.text.splitlines()
-            return [f"socks4://{proxy}" for proxy in proxy_list if proxy.strip()]
-        logger.warning(f"Proxy fetch returned {response.status_code}")
-    except Exception as e:
-        logger.warning(f"Proxy fetch error: {e}")
-    return []
-
-def fetch_channel_ids_via_api(proxy):
-    """
-    Preferred strategy: hit /oz/containers/linear which returns a JSON list of
-    live channels with content_id values ready to pass to the EPG endpoint.
-    Returns a list of int content_ids, or [] on failure.
-    """
-    try:
-        response = requests.get(TUBI_CONTAINERS_URL, **_tubi_request_kwargs(proxy))
-        if response.status_code != 200:
-            logger.warning(f"containers/linear -> {response.status_code} (proxy={proxy})")
-            return []
-        data = response.json()
-        channel_ids = []
-        # Response shape: {"rows": [{"contents": [{"content_id": ...}, ...]}]}
-        for row in data.get("rows", []):
-            for item in row.get("contents", []):
-                cid = _content_id_of(item)
-                if cid is not None:
-                    channel_ids.append(cid)
-        # Alternate flat shape: {"contents": [...]}
-        if not channel_ids:
-            for item in data.get("contents", []):
-                cid = _content_id_of(item)
-                if cid is not None:
-                    channel_ids.append(cid)
-        logger.info(f"API strategy: found {len(channel_ids)} channel IDs")
-        return channel_ids
-    except Exception as e:
-        logger.warning(f"API strategy error: {e}")
+    response = requests.get(url)
+    if response.status_code == 200:
+        proxy_list = response.text.splitlines()
+        return [f"socks4://{proxy}" for proxy in proxy_list]
+    else:
         return []
 
 def fetch_channel_list(proxy, retries=3):
-    """
-    Fallback strategy: load /live and extract the window.__data JSON blob.
-    Returns the parsed object, or {} on failure.
-    """
+    url = "https://tubitv.com/live"
     for attempt in range(retries):
         try:
-            response = requests.get(TUBI_LIVE_PAGE_URL, **_tubi_request_kwargs(proxy))
-            if response.status_code != 200:
-                logger.warning(f"HTML fetch -> {response.status_code} attempt {attempt + 1} (proxy={proxy})")
-                continue
+            if proxy:
+                response = requests.get(url, proxies={"http": proxy, "https": proxy}, verify=False, timeout=20)
+            else:
+                response = requests.get(url, verify=False, timeout=20)
+            response.encoding = 'utf-8'
+            if response.status_code != 200: continue
 
             html_content = response.content.decode('utf-8', errors='replace')
             soup = BeautifulSoup(html_content, "html.parser")
-
+            script_tags = soup.find_all("script")
             target_script = None
-            for script in soup.find_all("script"):
-                text = script.string or ""
-                if "window.__data" in text:
-                    target_script = text
+            for script in script_tags:
+                if script.string and script.string.strip().startswith("window.__data"):
+                    target_script = script.string
                     break
-
-            if not target_script:
-                # Alternate embed names Tubi has used
-                for script in soup.find_all("script"):
-                    text = script.string or ""
-                    if text.strip().startswith("{") and '"epg"' in text:
-                        target_script = text
-                        break
-
-            if not target_script:
-                logger.warning(f"HTML strategy: no window.__data found (attempt {attempt + 1})")
-                continue
+            if not target_script: continue
 
             start_index = target_script.find("{")
             end_index = target_script.rfind("}") + 1
             json_string = target_script[start_index:end_index]
             json_string = json_string.replace('undefined', 'null')
             json_string = re.sub(r'new Date\("([^"]*)"\)', r'"\1"', json_string)
-            logger.info("HTML strategy: successfully decoded window.__data")
             return json.loads(json_string)
-        except Exception as e:
-            logger.warning(f"HTML strategy error (attempt {attempt + 1}): {e}")
-    return {}
-
-def _content_id_of(entry):
-    """Normalise a Tubi container entry (int, str, or dict) into an int content id."""
-    if isinstance(entry, bool):
-        return None
-    if isinstance(entry, int):
-        return entry
-    if isinstance(entry, dict):
-        value = entry.get('content_id') or entry.get('contentId') or entry.get('id')
-        try:
-            return int(value) if value is not None else None
-        except (TypeError, ValueError):
-            return None
-    if isinstance(entry, str) and entry.strip().isdigit():
-        return int(entry)
-    return None
-
-def _iter_container_categories(json_data):
-    """
-    Recursively yield any dict that looks like a Tubi EPG container/category
-    (i.e. contains a 'contents' list). Used as a fallback when the blob no
-    longer matches the legacy epg.contentIdsByContainer shape.
-    """
-    stack = [json_data]
-    visited = set()
-    while stack:
-        node = stack.pop()
-        if isinstance(node, (dict, list)):
-            node_id = id(node)
-            if node_id in visited:
-                continue
-            visited.add(node_id)
-        if isinstance(node, dict):
-            if isinstance(node.get('contents'), list):
-                yield node
-            for value in node.values():
-                if isinstance(value, (dict, list)):
-                    stack.append(value)
-        elif isinstance(node, list):
-            for value in node:
-                if isinstance(value, (dict, list)):
-                    stack.append(value)
-
-def extract_ids_from_html_data(json_data):
-    """Pull the content_id list out of the window.__data blob."""
-    channel_ids = []
-
-    # Preferred: known EPG container path.
-    container = json_data if isinstance(json_data, dict) else {}
-    content_ids_by_container = container.get('epg', {}).get('contentIdsByContainer', {})
-    for container_list in content_ids_by_container.values():
-        for category in container_list:
-            for entry in category.get('contents', []):
-                cid = _content_id_of(entry)
-                if cid is not None:
-                    channel_ids.append(cid)
-
-    # Fallback: recursively scan the whole blob for any 'contents' arrays.
-    if not channel_ids:
-        for category in _iter_container_categories(json_data):
-            for entry in category.get('contents', []):
-                cid = _content_id_of(entry)
-                if cid is not None:
-                    channel_ids.append(cid)
-
-    # Deduplicate while preserving order.
-    seen = set()
-    unique_ids = []
-    for cid in channel_ids:
-        if cid not in seen:
-            seen.add(cid)
-            unique_ids.append(cid)
-    return unique_ids
+        except: continue
+    return []
 
 def create_group_mapping(json_data):
     group_mapping = {}
-
-    def _add_category(category):
-        group_name = category.get('name') or category.get('title') or 'Other'
-        for entry in category.get('contents', []):
-            cid = _content_id_of(entry)
-            if cid is not None:
-                group_mapping[str(cid)] = group_name
-
-    container = json_data if isinstance(json_data, dict) else {}
-    content_ids_by_container = container.get('epg', {}).get('contentIdsByContainer', {})
+    content_ids_by_container = json_data.get('epg', {}).get('contentIdsByContainer', {})
     for container_list in content_ids_by_container.values():
         for category in container_list:
-            _add_category(category)
-
-    if not group_mapping:
-        for category in _iter_container_categories(json_data):
-            _add_category(category)
-
+            group_name = category.get('name', 'Other')
+            for content_id in category.get('contents', []):
+                group_mapping[str(content_id)] = group_name
     return group_mapping
 
 def fetch_epg_data(channel_list):
-    """
-    Fetch EPG rows for a list of content_ids.
-    Batches into groups of 150 to stay within URL length limits.
-    Returns a list of EPG row dicts.
-    """
-    if not channel_list:
-        return []
-
     epg_data = []
     group_size = 150
     grouped_ids = [channel_list[i:i + group_size] for i in range(0, len(channel_list), group_size)]
     for group in grouped_ids:
+        url = "https://tubitv.com/oz/epg/programming"
         params = {"content_id": ','.join(map(str, group))}
-        try:
-            response = requests.get(TUBI_EPG_URL, params=params, headers=TUBI_HEADERS, timeout=20)
-            if response.status_code != 200:
-                logger.warning(f"EPG batch failed: {response.status_code}")
-                continue
+        response = requests.get(url, params=params)
+        if response.status_code == 200:
             epg_data.extend(response.json().get('rows', []))
-        except Exception as e:
-            logger.warning(f"EPG batch error: {e}")
-
-    logger.info(f"EPG fetch: {len(epg_data)} rows returned")
     return epg_data
 
 def clean_stream_url(url):
-    parsed_url = urlparse(unquote(url))
+    parsed_url = urlparse(url)
     return urlunparse((parsed_url.scheme, parsed_url.netloc, parsed_url.path, '', '', ''))
 
 def create_m3u_playlist(epg_data, group_mapping):
-    output_lines = ['#EXTM3U url-tvg="tubi_epg.xml"']
+    sorted_epg_data = sorted(epg_data, key=lambda x: x.get('title', '').lower())
+    playlist = f"#EXTM3U url-tvg=\"tubi_epg.xml\"\n"
     seen_urls = set()
-    for elem in sorted(epg_data, key=lambda x: x.get('title', '').lower()):
-        channel_name = (elem.get('title') or 'Unknown Channel').encode('utf-8', errors='ignore').decode('utf-8')
+    for elem in sorted_epg_data:
+        channel_name = elem.get('title', 'Unknown Channel').encode('utf-8', errors='ignore').decode('utf-8')
+        stream_url = unquote(elem['video_resources'][0]['manifest']['url']) if elem.get('video_resources') else ''
+        clean_url = clean_stream_url(stream_url)
         tvg_id = str(elem.get('content_id', ''))
-        logo_url = (elem.get('images', {}).get('thumbnail') or [None])[0] or ''
+        logo_url = elem.get('images', {}).get('thumbnail', [None])[0]
         group_title = group_mapping.get(tvg_id, 'Other').encode('utf-8', errors='ignore').decode('utf-8')
-
-        video_resources = elem.get('video_resources') or []
-        if not video_resources:
-            continue
-        raw_url = (video_resources[0].get('manifest') or {}).get('url', '')
-        clean_url = clean_stream_url(raw_url)
-        if not clean_url or clean_url in seen_urls:
-            continue
-
-        output_lines.append(
-            f'#EXTINF:-1 tvg-id="{tvg_id}" tvg-logo="{logo_url}" group-title="{group_title}",{channel_name}'
-        )
-        output_lines.append(clean_url)
-        seen_urls.add(clean_url)
-
-    return "\n".join(output_lines) + "\n"
+        if clean_url and clean_url not in seen_urls:
+            playlist += f'#EXTINF:-1 tvg-id="{tvg_id}" tvg-logo="{logo_url}" group-title="{group_title}",{channel_name}\n{clean_url}\n'
+            seen_urls.add(clean_url)
+    return playlist
 
 def create_epg_xml(epg_data):
     root = ET.Element("tv")
     for station in epg_data:
-        cid = str(station.get("content_id", ""))
-        channel = ET.SubElement(root, "channel", id=cid)
+        channel = ET.SubElement(root, "channel", id=str(station.get("content_id")))
         ET.SubElement(channel, "display-name").text = station.get("title", "Unknown Title")
-        thumb = (station.get("images", {}).get("thumbnail") or [None])[0]
-        if thumb:
-            ET.SubElement(channel, "icon", src=thumb)
-
+        ET.SubElement(channel, "icon", src=station.get("images", {}).get("thumbnail", [None])[0])
         for program in station.get('programs', []):
-            programme = ET.SubElement(root, "programme", channel=cid)
+            programme = ET.SubElement(root, "programme", channel=str(station.get("content_id")))
             start = program.get("start_time", "")
             stop = program.get("end_time", "")
             try:
@@ -627,7 +419,7 @@ def create_epg_xml(epg_data):
                 dt_stop = datetime.strptime(stop, "%Y-%m-%dT%H:%M:%SZ")
                 programme.set("start", dt_start.strftime("%Y%m%d%H%M%S +0000"))
                 programme.set("stop", dt_stop.strftime("%Y%m%d%H%M%S +0000"))
-            except Exception:
+            except:
                 programme.set("start", start)
                 programme.set("stop", stop)
             ET.SubElement(programme, "title").text = program.get("title", "")
@@ -636,71 +428,28 @@ def create_epg_xml(epg_data):
     return ET.ElementTree(root)
 
 def generate_tubi_m3u():
-    # Make sure socks4:// proxies can be used at all (CI runners lack PySocks).
-    socks_ok = ensure_socks_support()
-    if socks_ok:
-        proxies = get_proxies("US")
-    else:
-        proxies = []
-        logger.warning("Tubi: SOCKS support unavailable; skipping proxies and using direct connection.")
-
-    def _attempt(proxy):
-        """Return (channel_ids, group_mapping) for one proxy (None = direct)."""
-        # --- Strategy 1: direct JSON API ---
-        ids = fetch_channel_ids_via_api(proxy)
-        if ids:
-            # HTML scrape is optional here; it only supplies group titles.
-            html_data = fetch_channel_list(proxy)
-            mapping = create_group_mapping(html_data) if html_data else {}
-            return ids, mapping
-
-        # --- Strategy 2: HTML scrape (yields both IDs and group mapping) ---
-        html_data = fetch_channel_list(proxy)
-        if html_data:
-            ids = extract_ids_from_html_data(html_data)
-            if ids:
-                return ids, create_group_mapping(html_data)
-            # Diagnostic: show top-level keys so future shape changes are visible.
-            try:
-                keys = list(html_data.keys())[:25] if isinstance(html_data, dict) else type(html_data).__name__
-                logger.warning(f"Tubi: window.__data had no extractable IDs. Top-level keys: {keys}")
-            except Exception:
-                pass
-
-        return [], {}
-
-    channel_ids = []
-    group_mapping = {}
-
-    # Direct connection first: fast, and sufficient on US CI runners
-    # (the direct HTML scrape decodes window.__data successfully).
-    logger.info("Tubi: trying direct connection...")
-    channel_ids, group_mapping = _attempt(None)
-
-    # Fall back to US proxies if the direct attempt yielded nothing.
-    if not channel_ids:
+    proxies = get_proxies("US")
+    json_data = None
+    if proxies:
         for proxy in proxies:
-            logger.info(f"Tubi: trying proxy {proxy}")
-            channel_ids, group_mapping = _attempt(proxy)
-            if channel_ids:
-                break
+            json_data = fetch_channel_list(proxy)
+            if json_data: break
+    if not json_data: json_data = fetch_channel_list(None)
+    if not json_data: return
 
-    if not channel_ids:
-        logger.error("Tubi: could not retrieve any channel IDs. Skipping.")
-        return
+    channel_list = []
+    content_ids_by_container = json_data.get('epg', {}).get('contentIdsByContainer', {})
+    for container_list in content_ids_by_container.values():
+        for category in container_list:
+            channel_list.extend(category.get('contents', []))
 
-    logger.info(f"Tubi: got {len(channel_ids)} channel IDs")
-
-    epg_data = fetch_epg_data(channel_ids)
-    if not epg_data:
-        logger.error("Tubi: EPG endpoint returned no data. Skipping.")
-        return
-
-    m3u_playlist = create_m3u_playlist(epg_data, group_mapping)
-    epg_tree = create_epg_xml(epg_data)
-    write_m3u_file("tubi_all.m3u", m3u_playlist)
-    epg_tree.write(os.path.join(OUTPUT_DIR, "tubi_epg.xml"), encoding='utf-8', xml_declaration=True)
-    logger.info(f"Tubi: wrote {len(epg_data)} channels.")
+    epg_data = fetch_epg_data(channel_list)
+    if epg_data:
+        group_mapping = create_group_mapping(json_data)
+        m3u_playlist = create_m3u_playlist(epg_data, group_mapping)
+        epg_tree = create_epg_xml(epg_data)
+        write_m3u_file("tubi_all.m3u", m3u_playlist)
+        epg_tree.write(os.path.join(OUTPUT_DIR, "tubi_epg.xml"), encoding='utf-8', xml_declaration=True)
 
 # --- Execution ---
 
@@ -711,3 +460,4 @@ if __name__ == "__main__":
     generate_samsungtvplus_m3u()
     generate_tubi_m3u()
     generate_roku_m3u()
+
